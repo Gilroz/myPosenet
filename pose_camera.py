@@ -51,7 +51,7 @@ def draw_pose(dwg, pose, src_size, inference_box, color='yellow', threshold=0.2)
         # Offset and scale to source coordinate space.
         kp_y = int((keypoint.yx[0] - box_y) * scale_y)
         kp_x = int((keypoint.yx[1] - box_x) * scale_x)
-
+#xys es la variable que va guardando las coordenadas con los puntos encontrados,de aqui se utilizan para calcular los angulos.
         xys[label] = (kp_x, kp_y)
         dwg.add(dwg.circle(center=(int(kp_x), int(kp_y)), r=5,
                            fill='cyan', fill_opacity=keypoint.score, stroke=color))
