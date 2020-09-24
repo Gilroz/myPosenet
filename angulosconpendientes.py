@@ -63,7 +63,7 @@ Puntos=(('right hip','right shoulder','left shoulder'),
     ('left hip','left shoulder','right shoulder'),
     ('right shoulder','right hip','left shoulder'),
     ('right shoulder','left hip','left shoulder'),
-    ('right wrist','right elbow','rigth shoulder'),
+    ('right wrist','right elbow','right shoulder'),
     ('left wrist','left elbow','left shoulder'),
     ('right ankle','right knee','right hip'),
     ('left ankle','left knee','left hip')
