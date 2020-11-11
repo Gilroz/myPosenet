@@ -1,17 +1,60 @@
-#Funcion Principal
-import argparse   #Para pasarle argumentos a la funcion
-import collections  #Crea arreglos de datos
-from functools import partial   #Crea funciones'parciales'(que pueden completarse posteriormente)
-import re               #Para hacer comparaciones de strings
-import time          #Biblioteca para el tiempo
- 
-import numpy as np  #Trabajar con tensores,matrices,etc
-from PIL import Image #Biblioteca para trabajar con imagenes
-import svgwrite      #Biblioteca para dibujar objetos
-import gstreamer     #Modulo de streaming
+# Copyright 2019 Google LLC
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+from datetime import datetime
+import argparse
+import collections
+from functools import partial
+import re
+import time
 
-from pose_engine import PoseEngine #Tareas de deteccion de pose
+import numpy as np
+from PIL import Image
+import svgwrite
+import gstreamer
+import math
+from pose_engine import PoseEngine
 
+def distancia(a,b):
+  d=math.sqrt(((b[0]-a[0])**2)+((b[1]-a[1])**2))
+  return d
+
+def angulo(a,b,c):
+  dis_ab=distancia(a,b)
+  dis_ac=distancia(a,c)
+  dis_bc=distancia(b,c)
+  theta=np.arccos((dis_bc**2 -dis_ac**2 - dis_ab**2)/((-2*dis_ac*dis_ab)+0.000000000000001))
+  theta=(180/math.pi)*theta
+  return theta
+now = datetime.now()
+nombre=str(now)+'.txt'
+angulos=open(nombre ,'a')
+angulos.write('\n'+'Nueva entrada del archivo')
+angulos.close()
+
+Puntos=(
+    ('right shoulder','left shoulder','right hip'),  #hombro derecho interno
+    ('left shoulder','left hip','right shoulder'),  #hombro izquierdo interno
+    ('right hip','right shoulder','left hip'),      #cadera derecha interno
+    ('left hip','left shoulder','right hip'),       #cadera izquierda interno
+    ('right shoulder','right elbow','right hip'),   #hombro derecho con respecto al codo
+    ('right elbow','right shoulder','right wrist'), #codo derecho
+    ('left shoulder','left elbow','left hip'),      #hombro izquierdo con respecto al cod
+    ('left elbow','left shoulder','left wrist'),    #codo izquierdo
+    ('right knee','right hip','right ankle'),       #rodilla derecha
+    ('right hip','left hip','right knee'),          #cadera derecha con respecto a la rodilla
+    ('left knee','left hip','left ankle'),          #rodilla izquierda
+    ('left hip','right hip','left knee'),)           #cadera izquierda con respecto a la rodilla
 EDGES = (
     ('nose', 'left eye'),
     ('nose', 'right eye'),
@@ -34,14 +77,14 @@ EDGES = (
     ('right knee', 'right ankle'),
 )
 
-#Configuraciones del texto mostrado en pantalla
+
 def shadow_text(dwg, x, y, text, font_size=16):
     dwg.add(dwg.text(text, insert=(x + 1, y + 1), fill='black',
                      font_size=font_size, style='font-family:sans-serif'))
     dwg.add(dwg.text(text, insert=(x, y), fill='white',
                      font_size=font_size, style='font-family:sans-serif'))
 
-#Configuraciones sobre como se va a dibujar la pose detectada
+
 def draw_pose(dwg, pose, src_size, inference_box, color='yellow', threshold=0.2):
     box_x, box_y, box_w, box_h = inference_box
     scale_x, scale_y = src_size[0] / box_w, src_size[1] / box_h
@@ -51,18 +94,32 @@ def draw_pose(dwg, pose, src_size, inference_box, color='yellow', threshold=0.2)
         # Offset and scale to source coordinate space.
         kp_y = int((keypoint.yx[0] - box_y) * scale_y)
         kp_x = int((keypoint.yx[1] - box_x) * scale_x)
-#xys es la variable que va guardando las coordenadas con los puntos encontrados,de aqui se utilizan para calcular los angulos.
+
         xys[label] = (kp_x, kp_y)
         dwg.add(dwg.circle(center=(int(kp_x), int(kp_y)), r=5,
                            fill='cyan', fill_opacity=keypoint.score, stroke=color))
+        #print(' %-20s x=%-4d y=%-4d score=%.1f' %
+             # (label, kp_x, kp_y, keypoint.score))
+        #coordenadas=open('coordenadas.txt','a')
+        #coordenadas.write('\n'+label+str(xys[label])+str(keypoint.score))
+        #coordenadas.close()
 
     for a, b in EDGES:
         if a not in xys or b not in xys: continue
         ax, ay = xys[a]
         bx, by = xys[b]
         dwg.add(dwg.line(start=(ax, ay), end=(bx, by), stroke=color, stroke_width=2))
-
-#Contador de cuadros por segundo
+    for a,b,c in Puntos:
+        if a not in xys or b not in xys or c not in xys: continue
+        etiqueta=a
+        a=xys[a]
+        b =xys[b]
+        c=xys[c]
+        theta=angulo(a,b,c)
+        angulos=open('angulos.txt','a')
+        angulos.write('\n'+etiqueta+' '+str(theta))
+        angulos.close()
+    
 def avg_fps_counter(window_size):
     window = collections.deque(maxlen=window_size)
     prev = time.monotonic()
@@ -74,10 +131,7 @@ def avg_fps_counter(window_size):
         prev = curr
         yield len(window) / sum(window)
 
-#Funciones para correr el programa recibe los argumentos de entrada y adapta el modelo segun los mismos
-#Linea 121 corre el streamer
-
-def main():
+def run(inf_callback, render_callback):
     parser = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
     parser.add_argument('--mirror', help='flip video horizontally', action='store_true')
     parser.add_argument('--model', help='.tflite model path.', required=False)
@@ -102,18 +156,29 @@ def main():
         appsink_size = (1280, 720)
         model = args.model or default_model % (721, 1281)
 
+    print('Loading model: ', model)
+    engine = PoseEngine(model)
+    input_shape = engine.get_input_tensor_shape()
+    inference_size = (input_shape[2], input_shape[1])
+
+    gstreamer.run_pipeline(partial(inf_callback, engine), partial(render_callback, engine),
+                           src_size, inference_size,
+                           mirror=args.mirror,
+                           videosrc=args.videosrc,
+                           h264=args.h264,
+                           jpeg=args.jpeg
+                           )
+
+
+def main():
     n = 0
     sum_process_time = 0
     sum_inference_time = 0
     ctr = 0
     fps_counter  = avg_fps_counter(30)
-    #Engine contiene el modelo de CNN
-    input_tensor=engine.run_inference(input_tensor)
 
-    print('Loading model: ', model)
-    engine = PoseEngine(model)
-    input_shape = engine.get_input_tensor_shape()
-    inference_size = (input_shape[2], input_shape[1])
+    def run_inference(engine, input_tensor):
+        return engine.run_inference(input_tensor)
 
     def render_overlay(engine, output, src_size, inference_box):
         nonlocal n, sum_process_time, sum_inference_time, fps_counter
@@ -135,12 +200,8 @@ def main():
         for pose in outputs:
             draw_pose(svg_canvas, pose, src_size, inference_box)
         return (svg_canvas.tostring(), False)
-    pose= gstreamer.run_pipeline(input_tensor, render_overlay,
-                           src_size, inference_size,
-                           mirror=args.mirror,
-                           videosrc=args.videosrc,
-                           h264=args.h264,
-                           jpeg=args.jpeg)
+
+    run(run_inference, render_overlay)
 
 
 if __name__ == '__main__':
